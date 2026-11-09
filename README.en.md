@@ -58,7 +58,7 @@ For the latest main: `csp-format = { git = "https://github.com/nanikasheila/csp-
 `cargo build --release -p cspf`.
 
 Building needs a C compiler: SQLite and zlib are compiled in (the reference
-C zlib is needed to reproduce CSP's compressed bytes). Minimum Rust: 1.88.
+C zlib is needed to reproduce CSP's compressed bytes). Minimum Rust: 1.89.
 
 ### Versions
 

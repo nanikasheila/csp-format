@@ -20,7 +20,7 @@ flate2 = { version = "1.1", default-features = false, features = ["zlib"] }
 libz-sys = { version = "1.1", default-features = false, features = ["static", "libc"] }
 libc = "0.2"
 png = "0.18"
-rusqlite = { version = "0.40", features = ["bundled", "serialize"] }
+rusqlite = { version = "0.41", features = ["bundled", "serialize"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 

@@ -19,6 +19,11 @@ raise the minor version).
 
 ### Changed
 
+- rusqlite 0.41 (its bundled SQLite fixes RUSTSEC-2026-0459 /
+  CVE-2026-119375 in `libsqlite3-sys` 0.38). The minimum Rust version is now
+  1.89, as rusqlite 0.41 needs it. `database::serialize` keeps taking
+  `&Connection`: it asks SQLite for a copied image itself, since
+  `Connection::serialize` now needs `&mut`.
 - `docs/assets/spec/subtool-columns.tsv`: the value 2 of the length unit
   columns (`BrushSizeUnit`, `BrushInLengthUnit`...) is tens of pixels, not
   millimetres: CSP shows `BrushSize` 1.2 with unit 2 as 12.0 px and draws it
