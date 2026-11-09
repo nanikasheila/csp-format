@@ -26,7 +26,10 @@ python -m unittest discover -s python/tests
 python tools/release/readme_links.py crates/*/README.md python/README.md   # 配布物の README に相対リンクがないか
 ```
 
-CI（`.github/workflows/ci.yml`）も同じことを Linux・Windows・macOS と最低 Rust 版（1.88）で確かめる。
+CI（`.github/workflows/ci.yml`）も同じことを Linux・Windows・macOS と最低 Rust 版（1.89）で確かめる。
+
+CI はほかに、既知の脆弱性（`cargo audit`）と、ワークフローの Action がコミットで固定されていること（`tools/release/workflow_pins.py`）を見る。
+開発に使う Rust の版は `rust-toolchain.toml` で決めてあり、Rust・ライブラリ・Action を上げるのは Dependabot の PR。
 
 ## 3. タグを打つ
 

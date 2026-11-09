@@ -8,8 +8,27 @@ raise the minor version).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-10
+
 ### Added
 
+- `csp-format`: what a writer of pages needed SQL of its own for.
+  - 見開き: `ClipFile::make_double_page` (`story::make_double_page`,
+    `story::set_thumbnail_canvas_size`, `story::SPREAD_FRAME_FLAG`,
+    `story::SPREAD_CANVAS_FLAGS`) makes a single page's canvas that of a
+    spread. The format is the new chapter `docs/spec/10-spread.md`.
+  - The stored preview: `ClipFile::preview_png` / `set_preview`
+    (`edit::preview_png`, `edit::set_preview`) read it and replace it by an
+    image made some other way than `update_preview`, with its size.
+  - Text: `ClipFile::layer_text` / `set_layer_text` (`story::layer_text`,
+    `story::set_layer_text`) replace the text of a one-run text layer with its
+    run length and without the image CSP cached for it.
+  - Offscreens: `ClipFile::set_offscreen` replaces an offscreen's `Attribute`
+    and, with pixels, its external chunk (a layer mask's levels, a canvas
+    made wider). `model::LAYER_MASK_ENABLED` names the `LayerVisibility` bit,
+    and `docs/spec/03-canvas-and-layers.md` says how a mask is written.
+  - Rows by name: `database::row`, `first_row`, `update_row`, `update_rows`
+    and `add_column`, for the columns that have no function of their own.
 - `csp-assets`: write a sub tool from its settings. `SubToolDb::sut_parts`
   gives one sub tool's manager, node, settings rows and packed materials, and
   `build_sut` writes such parts as a `.sut` for CSP's サブツールの読み込み, each
@@ -29,6 +48,13 @@ raise the minor version).
   millimetres: CSP shows `BrushSize` 1.2 with unit 2 as 12.0 px and draws it
   as wide as 12 px on 600 and 1200 dpi canvases alike (W3c, checked for
   `BrushSizeUnit`).
+- libz-sys 1.1.32 in `Cargo.lock` (RUSTSEC-2026-0418: its build script left
+  environment variables in the build directory; found by the new audit job).
+- Development and CI use the Rust version in `rust-toolchain.toml`. CI also
+  looks for known vulnerabilities (`cargo audit`), runs with read-only
+  permissions (only the release job may write), and uses Actions pinned by
+  commit (`tools/release/workflow_pins.py` checks it). Dependabot proposes
+  the updates of crates, Actions and the Rust version.
 - The repository moved from `nanikasheila/CLIP_STUDIO_PAINT_Format` to
   `nanikasheila/csp-format`, so that its name matches the packages and does
   not carry the product name. GitHub forwards the old URLs. The repository
@@ -75,5 +101,6 @@ First release.
   crate; `csp_format.assets` for the files of `csp-assets`.
 - The sdist carries the tests and their synthetic files.
 
-[Unreleased]: https://github.com/nanikasheila/csp-format/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/nanikasheila/csp-format/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/nanikasheila/csp-format/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/nanikasheila/csp-format/releases/tag/v0.1.0

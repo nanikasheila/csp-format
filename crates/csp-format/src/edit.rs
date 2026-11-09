@@ -181,6 +181,103 @@ impl ClipFile {
     }
 }
 
+/// The PNG of the preview CSP keeps with a file (`CanvasPreview.ImageData` of
+/// its one row): what file browsers and a work's page list show without
+/// opening the page. None when the file keeps none.
+pub fn preview_png(db: &rusqlite::Connection) -> Result<Option<Vec<u8>>> {
+    Ok(crate::database::first_row(db, "CanvasPreview")?.and_then(|row| row.blob("ImageData").map(<[u8]>::to_vec)))
+}
+
+/// Replace the preview kept with a file by `image`, with its size
+/// (`ImageWidth` / `ImageHeight`, where the file has the columns). False
+/// (nothing changed) when the file keeps no preview: none is added.
+pub fn set_preview(db: &rusqlite::Connection, image: &RgbaImage) -> Result<bool> {
+    if preview_png(db)?.is_none() {
+        return Ok(false);
+    }
+    // The one row is named by its place, as files differ in whether it has a `MainId`.
+    db.execute(
+        "UPDATE CanvasPreview SET ImageData = ?1 WHERE rowid = (SELECT rowid FROM CanvasPreview ORDER BY rowid LIMIT 1)",
+        [image.to_png()?],
+    )?;
+    for (column, value) in [("ImageWidth", image.width), ("ImageHeight", image.height)] {
+        if has_column(db, "CanvasPreview", column)? {
+            db.execute(
+                &format!(
+                    "UPDATE CanvasPreview SET {} = ?1 WHERE rowid = (SELECT rowid FROM CanvasPreview ORDER BY rowid LIMIT 1)",
+                    quote(column)
+                ),
+                [value],
+            )?;
+        }
+    }
+    Ok(true)
+}
+
+impl ClipFile {
+    /// The PNG of the stored preview ([`preview_png`]).
+    pub fn preview_png(&self) -> Result<Option<Vec<u8>>> {
+        preview_png(self.database())
+    }
+
+    /// Replace the stored preview by `image` ([`set_preview`]): for a preview
+    /// made some other way than by rendering the layers ([`ClipFile::update_preview`]).
+    pub fn set_preview(&mut self, image: &RgbaImage) -> Result<bool> {
+        set_preview(self.database(), image)
+    }
+
+    /// Replace what an offscreen holds: its `Attribute` (size, planes, block
+    /// sizes) and, with `data`, its pixels as a new external chunk in place of
+    /// the one it named. Without `data` the offscreen
+    /// keeps naming the chunk it named (one that holds nothing yet names a
+    /// chunk that is not stored, as in CSP's own files).
+    pub fn set_offscreen(
+        &mut self,
+        main_id: i64,
+        attribute: &Attribute,
+        data: Option<&crate::offscreen::BlockData>,
+    ) -> Result<()> {
+        let mut values = vec![("Attribute", Value::Blob(attribute.to_bytes()))];
+        let Some(row) = self.row("Offscreen", main_id)? else { bail!("No Offscreen {main_id}") };
+        if let Some(data) = data {
+            if let Some(old) = row.blob("BlockData").and_then(|id| std::str::from_utf8(id).ok()) {
+                self.remove_external(old);
+            }
+            let id = new_external_id();
+            self.set_external(&id, data.to_bytes());
+            values.push(("BlockData", Value::Blob(id.into_bytes())));
+        }
+        crate::database::update_row(self.database(), "Offscreen", main_id, &values)?;
+        Ok(())
+    }
+
+    /// The text of a text layer ([`crate::story::layer_text`]).
+    pub fn layer_text(&self, layer_id: i64) -> Result<Option<String>> {
+        crate::story::layer_text(self.database(), layer_id)
+    }
+
+    /// Replace the text of a one-run text layer ([`crate::story::set_layer_text`]).
+    pub fn set_layer_text(&mut self, layer_id: i64, text: &str) -> Result<bool> {
+        let changed = crate::story::set_layer_text(self.database(), layer_id, text)?;
+        if changed {
+            self.reload()?;
+        }
+        Ok(changed)
+    }
+
+    /// Make this single page a 見開き twice as wide: the canvas settings
+    /// ([`crate::story::make_double_page`]) and the canvas size the layer
+    /// thumbnails are kept for. The pixels (offscreens sized by the canvas),
+    /// the preview and the right page's story info layers stay the caller's.
+    pub fn make_double_page(&mut self) -> Result<()> {
+        crate::story::make_double_page(self.database())?;
+        self.reload()?;
+        let (width, height) = (self.canvas.width_px, self.canvas.height_px);
+        crate::story::set_thumbnail_canvas_size(self.database(), width, height)?;
+        self.reload()
+    }
+}
+
 /// The kinds of layer [`ClipFile`] can add.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NewLayer {
@@ -702,6 +799,53 @@ mod tests {
 
     fn names_in(file: &ClipFile, folder: i64) -> Vec<String> {
         file.layer_children(folder).unwrap().iter().map(|id| file.layers.get(*id).unwrap().name.clone()).collect()
+    }
+
+    #[test]
+    fn the_stored_preview_is_replaced_with_its_size() {
+        let mut page = crate::blank::blank_parts().unwrap();
+        let old = crate::image::decode_png(&page.preview_png().unwrap().unwrap()).unwrap();
+        let image = RgbaImage { width: old.width + 3, height: 2, pixels: vec![9; (old.width as usize + 3) * 2 * 4] };
+        assert!(page.set_preview(&image).unwrap());
+        let page = ClipFile::from_bytes(page.to_bytes().unwrap()).unwrap();
+        assert_eq!(crate::image::decode_png(&page.preview_png().unwrap().unwrap()).unwrap().pixels, image.pixels);
+        let row = crate::database::first_row(page.database(), "CanvasPreview").unwrap().unwrap();
+        assert_eq!((row.int("ImageWidth"), row.int("ImageHeight")), (image.width as i64, 2));
+        // A file that keeps no preview is not given one.
+        page.database().execute("DELETE FROM CanvasPreview", []).unwrap();
+        assert_eq!(preview_png(page.database()).unwrap(), None);
+        assert!(!set_preview(page.database(), &image).unwrap());
+    }
+
+    #[test]
+    fn an_offscreen_takes_new_pixels_as_a_new_chunk() {
+        let mut file = ClipFile::create(&crate::NewCanvas { width: 8, height: 8, ..Default::default() }).unwrap();
+        let layer = file.add_layer(file.canvas.root_folder, NewLayer::Raster, "a").unwrap();
+        let mipmap = file.layers.get(layer).unwrap().render_mipmap;
+        let offscreen = file.mipmap(mipmap).unwrap().unwrap().levels[0].offscreen;
+        let row = file.row("Offscreen", offscreen).unwrap().unwrap();
+        let mut attribute = Attribute::parse(row.blob("Attribute").unwrap()).unwrap();
+        let parameter = attribute.parameter().unwrap();
+        let chunk = |file: &ClipFile| {
+            String::from_utf8(file.row("Offscreen", offscreen).unwrap().unwrap().blob("BlockData").unwrap().to_vec())
+                .unwrap()
+        };
+        let before = chunk(&file);
+        // The attribute alone: the offscreen goes on naming the chunk it named.
+        file.set_offscreen(offscreen, &attribute, None).unwrap();
+        assert_eq!(chunk(&file), before);
+        let data = crate::offscreen::BlockData::from_raw_blocks(
+            &vec![Some(vec![7; parameter.block_bytes()]); parameter.block_count()],
+            parameter.block_bytes(),
+        )
+        .unwrap();
+        attribute.set_block_sizes(&data.record_sizes());
+        file.set_offscreen(offscreen, &attribute, Some(&data)).unwrap();
+        assert_ne!(chunk(&file), before);
+        assert_eq!(file.external(&chunk(&file)), Some(data.to_bytes().as_slice()));
+        assert!(file.set_offscreen(i64::MAX, &attribute, None).is_err());
+        let report = crate::verify::check_clip(file.to_bytes().unwrap(), Default::default());
+        assert!(report.ok(), "{:?}", report);
     }
 
     #[test]

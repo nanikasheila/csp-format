@@ -102,6 +102,21 @@
 `LayerLayerMaskMipmap` が 0 でなければマスクを持つ。マスクは 1 面の画素（04 章の alpha）で、0 が隠す、255 が見せる。
 マスクの外（格納の範囲の外）は `Offscreen.Attribute` の初期値（InitColor）で、ふつうは見せる。`LayerVisibility` のビット 1 が立っているときだけ使う。
 
+マスクを付けたレイヤーの行（CSP EX 5.1.4 の「レイヤーマスクを作成」で作ったフォルダー・ラスター・ベクターと、同じ形に書いて CSP で開いたファイルで確かめた）:
+
+- `LayerType` にビット 1（2）が立つ（フォルダー・ベクターは 2、ラスターは 3）。読むときはこのビットを外して種類を決める。
+- `LayerVisibility` にビット 1（2）が立つ（3 = 表示 + マスクを使う）。
+- `LayerLayerMaskMipmap` / `LayerLayerMaskThumbnail` が、描画用（`LayerRenderMipmap` / `LayerRenderThumbnail`）と同じ作りのミップマップとサムネイルを指す。
+- マスクの `Offscreen` の Parameter 節は、キャンバスと同じ大きさで、画素の種類 1・alpha 1 面・色 0 面・計 1 面、続く値は `0, 0, 0, 1, 256, 0, 256, 256`
+  （コマ枠フォルダーのマスクと同じ）。画素は 256×256 のブロックに 8 bit の 1 面で、全部 0 のブロックは保存しない（隠れる）。
+- `LayerMaskOffsetX/Y`、`LayerMaskOffscrOffsetX/Y` は、作ったときは 0（レイヤーを動かすと付く）。
+
+フォルダーの行は、ラスターの行と `LayerType`（0）、`LayerFolder`（1）、`LayerMasking`（32）が違い、`LayerColorTypeIndex` と `LayerColorType*Checked` は NULL。
+描画用の `Offscreen` は全段にあるが、画素は保存しない（外部チャンクがない）。
+
+ライブラリでは、`ClipFile::set_offscreen` でマスクの各段の `Attribute` と画素を書き、`ClipFile::set_layer_values` で上の列を書く
+（ビットは `model::LAYER_TYPE_MASKED`・`model::LAYER_MASK_ENABLED`）。
+
 ## コマ枠フォルダー（確認済み、V3 5 章）
 
 コマ枠フォルダー（`ComicFrameLineMipmap` のあるフォルダー）は、マスク（`LayerLayerMaskMipmap`）と枠線（`ComicFrameLineMipmap`）の画素を保存しない

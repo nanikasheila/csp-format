@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/csp-format", "crates/csp-assets", "crates/cspf", "crates/csp-lab"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/nanikasheila/csp-format"
@@ -12,5 +12,5 @@ homepage = "https://github.com/nanikasheila/csp-format"
 authors = ["nanikasheila"]
 
 [workspace.dependencies]
-csp-format = { path = "crates/csp-format", version = "0.1.0" }
-csp-assets = { path = "crates/csp-assets", version = "0.1.0" }
+csp-format = { path = "crates/csp-format", version = "0.2.0" }
+csp-assets = { path = "crates/csp-assets", version = "0.2.0" }

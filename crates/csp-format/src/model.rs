@@ -176,6 +176,8 @@ impl LayerKind {
 pub const LAYER_TYPE_RASTER: i64 = 1;
 /// `LayerType` bit of a layer with a mask.
 pub const LAYER_TYPE_MASKED: i64 = 2;
+/// `LayerVisibility` bit of a layer whose mask is on (bit 1 is the layer's own eye).
+pub const LAYER_MASK_ENABLED: i64 = 2;
 /// `LayerType` of the root folder.
 pub const LAYER_TYPE_ROOT: i64 = 256;
 /// `LayerType` of a story info (作品情報) layer.
@@ -248,7 +250,7 @@ impl Layer {
             kind,
             layer_type,
             visible: visibility & 1 != 0,
-            mask_enabled: visibility & 2 != 0,
+            mask_enabled: visibility & LAYER_MASK_ENABLED != 0,
             opacity: row.opt_int("LayerOpacity").unwrap_or(OPACITY_FULL),
             blend: row.int("LayerComposite"),
             clipping: row.int("LayerClip") != 0,
