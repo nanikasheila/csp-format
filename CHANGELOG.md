@@ -48,6 +48,8 @@ raise the minor version).
   millimetres: CSP shows `BrushSize` 1.2 with unit 2 as 12.0 px and draws it
   as wide as 12 px on 600 and 1200 dpi canvases alike (W3c, checked for
   `BrushSizeUnit`).
+- libz-sys 1.1.31 in `Cargo.lock` (RUSTSEC-2026-0418: its build script left
+  environment variables in the build directory; found by the new audit job).
 - Development and CI use the Rust version in `rust-toolchain.toml`. CI also
   looks for known vulnerabilities (`cargo audit`), runs with read-only
   permissions (only the release job may write), and uses Actions pinned by
