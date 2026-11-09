@@ -47,7 +47,7 @@ CELSYS の公式のものではなく、CELSYS の承認も受けていない。
 main の最新を使うときは `csp-format = { git = "https://github.com/nanikasheila/csp-format" }`、または clone して `cargo build --release -p cspf`。
 
 Rust のビルドには C コンパイラが要る（SQLite と zlib を組み込む。CSP と同じ圧縮結果を出すには zlib の C 実装が要るため）。
-最低 Rust 版は 1.88。
+最低 Rust 版は 1.89。
 
 ### 版の付け方
 

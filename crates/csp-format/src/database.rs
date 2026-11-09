@@ -22,8 +22,29 @@ pub fn open_bytes(image: &[u8]) -> Result<Connection> {
 }
 
 /// The database image of `connection` (what goes into CHNKSQLi).
+///
+/// rusqlite 0.41 made `Connection::serialize` take `&mut` (its no-copy
+/// image borrows the connection), which every reader here would have to
+/// pass on. A copied image needs no borrow, so this asks SQLite for one
+/// directly, as rusqlite 0.40 did.
+#[allow(unsafe_code)]
 pub fn serialize(connection: &Connection) -> Result<Vec<u8>> {
-    Ok(connection.serialize("main")?.to_vec())
+    let mut size: rusqlite::ffi::sqlite3_int64 = 0;
+    // SAFETY: the handle is the open connection's and is used only while
+    // it is borrowed here. With flags 0 SQLite returns its own copy of the
+    // image (`size` bytes from sqlite3_malloc) or null, so the slice is
+    // valid until sqlite3_free, and nothing else holds the copy.
+    unsafe {
+        let data = rusqlite::ffi::sqlite3_serialize(connection.handle(), c"main".as_ptr(), &raw mut size, 0);
+        if data.is_null() {
+            return Err(
+                rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_NOMEM), None).into()
+            );
+        }
+        let image = std::slice::from_raw_parts(data, usize::try_from(size).unwrap_or(0)).to_vec();
+        rusqlite::ffi::sqlite3_free(data.cast());
+        Ok(image)
+    }
 }
 
 /// One row read with `SELECT *`, columns in table order.
@@ -143,7 +164,7 @@ impl Row {
 /// Run a query and return its rows with column names.
 pub fn select(connection: &Connection, sql: &str, params: impl Params) -> Result<Vec<Row>> {
     let mut statement = connection.prepare(sql)?;
-    let columns: Vec<String> = statement.column_names().into_iter().map(str::to_owned).collect();
+    let columns: Vec<String> = statement.column_names().map(str::to_owned).collect();
     let index: Arc<HashMap<String, usize>> =
         Arc::new(columns.iter().enumerate().map(|(i, name)| (name.clone(), i)).collect());
     let columns = Arc::new(columns);
