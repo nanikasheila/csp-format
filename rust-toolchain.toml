@@ -1,0 +1,8 @@
+# The Rust that CI formats, lints, tests and releases with. Raise it on
+# purpose: Dependabot proposes the next one, and CI (clippy -D warnings)
+# checks it. The oldest Rust the crates build with is `rust-version` in
+# Cargo.toml, which CI checks on its own.
+[toolchain]
+channel = "1.99.1"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

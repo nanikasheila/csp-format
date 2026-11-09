@@ -500,6 +500,103 @@ pub fn move_run_length(blob: &[u8], delta: i64) -> Result<Vec<u8>> {
     .to_bytes())
 }
 
+/// The text of a text layer (`TextLayerString`, which CSP stores as a BLOB of
+/// UTF-8; a TEXT value is read too). None when the layer has none.
+pub fn layer_text(db: &Connection, layer_id: i64) -> Result<Option<String>> {
+    Ok(match crate::database::row(db, "Layer", layer_id)?.as_ref().and_then(|row| row.get("TextLayerString")) {
+        Some(Value::Blob(bytes)) => Some(String::from_utf8_lossy(bytes).into_owned()),
+        Some(Value::Text(text)) => Some(text.clone()),
+        _ => None,
+    })
+}
+
+/// Replace the text of a text layer whose text is one style run (a story
+/// info text, a caption): the text itself (stored as it was, BLOB or TEXT),
+/// the run's length by the difference in characters, and the image CSP caches
+/// for the text, which would go on showing the old one.
+///
+/// False (nothing changed) when the layer has no text or already says `text`.
+/// The block keeps its size: [`write_part`] and [`update_nombre`] are for the
+/// texts whose blocks must follow.
+pub fn set_layer_text(db: &Connection, layer_id: i64, text: &str) -> Result<bool> {
+    let Some(row) = crate::database::row(db, "Layer", layer_id)? else { return Ok(false) };
+    let (old, as_blob) = match row.get("TextLayerString") {
+        Some(Value::Blob(bytes)) => (String::from_utf8_lossy(bytes).into_owned(), true),
+        Some(Value::Text(old)) => (old.clone(), false),
+        _ => return Ok(false),
+    };
+    if old == text {
+        return Ok(false);
+    }
+    let stored = if as_blob { Value::Blob(text.as_bytes().to_vec()) } else { Value::Text(text.to_owned()) };
+    set_layer_column(db, layer_id, "TextLayerString", stored)?;
+    if let Some(attributes) = row.blob("TextLayerAttributes") {
+        let delta = text.chars().count() as i64 - old.chars().count() as i64;
+        set_layer_column(db, layer_id, "TextLayerAttributes", move_run_length(attributes, delta)?)?;
+    }
+    drop_render_cache(db, layer_id)?;
+    Ok(true)
+}
+
+/// `Canvas.CropFrameOptionFlag` of a page CSP EX 5 changed into a 見開き: the
+/// bits for a spread and for joined crop marks, and neither page side.
+pub const SPREAD_FRAME_FLAG: i64 = 17;
+
+/// `Canvas` columns CSP sets once a 見開き has the story info layers of its
+/// right page (a single page has no such columns).
+pub const SPREAD_CANVAS_FLAGS: [&str; 3] =
+    ["ComicStoryRightLayerCreated", "ComicNombreRightLayerCreated", "ComicNombreLayerCreated"];
+
+/// Make a single page's canvas that of a 見開き (docs/spec/10-spread.md): twice
+/// as wide in the canvas's own unit, `CanvasDoublePage` set, no page side
+/// (`ComicIsLeftPage`, the side bits of `CropFrameOptionFlag`), and, on a
+/// page with story info layers, the columns that say the right page's are
+/// there (`Canvas`'s [`SPREAD_CANVAS_FLAGS`], `Layer`'s [`FOR_RIGHT_PAGE`]).
+///
+/// The frame sizes stay those of one page: the two pages' frames meet in the
+/// middle. Only the settings are changed here. What is sized by the canvas
+/// (the offscreens, the thumbnails' canvas size, the preview) and the right
+/// page's story info layers are the caller's to widen and add.
+pub fn make_double_page(db: &Connection) -> Result<()> {
+    use crate::database::{add_column, update_rows};
+    let width = match canvas_value(db, "CanvasWidth")? {
+        Some(Value::Real(width)) => Value::Real(width * 2.0),
+        Some(Value::Integer(width)) => Value::Integer(width * 2),
+        _ => return Err(Error::format("Canvas has no width")),
+    };
+    add_column(db, "Canvas", "CanvasDoublePage")?;
+    let mut values = vec![("CanvasWidth", width), ("CanvasDoublePage", Value::Integer(1))];
+    if has_column(db, "Canvas", "ComicIsLeftPage")? {
+        values.push(("ComicIsLeftPage", Value::Integer(0)));
+    }
+    if let Some(Value::Integer(flag)) = canvas_value(db, "CropFrameOptionFlag")? {
+        let flag = (flag & !(LEFT_PAGE_FLAG | RIGHT_PAGE_FLAG)) | SPREAD_FRAME_FLAG;
+        values.push(("CropFrameOptionFlag", Value::Integer(flag)));
+    }
+    if has_column(db, "Layer", "ComicStoryInfoType")? {
+        for column in SPREAD_CANVAS_FLAGS {
+            add_column(db, "Canvas", column)?;
+            values.push((column, Value::Integer(1)));
+        }
+        add_column(db, "Layer", FOR_RIGHT_PAGE)?;
+    }
+    update_rows(db, "Canvas", &values)?;
+    Ok(())
+}
+
+/// The canvas size every layer thumbnail is kept for
+/// (`LayerThumbnail.ThumbnailCanvasWidth` / `Height`, canvas px; the
+/// thumbnails themselves stay 512 px square). Files without the columns are
+/// left as they are.
+pub fn set_thumbnail_canvas_size(db: &Connection, width: u32, height: u32) -> Result<()> {
+    for (column, value) in [("ThumbnailCanvasWidth", width), ("ThumbnailCanvasHeight", height)] {
+        if has_column(db, "LayerThumbnail", column)? {
+            crate::database::update_rows(db, "LayerThumbnail", &[(column, Value::Integer(value as i64))])?;
+        }
+    }
+    Ok(())
+}
+
 /// Write the page's own number into the (ノンブル) text.
 ///
 /// CSP writes `ComicStoryNombreStart + ComicPageIndex` there (a shown
@@ -645,6 +742,82 @@ impl crate::ClipFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn page() -> crate::ClipFile {
+        let setup = crate::blank::PageSetup {
+            canvas_mm: [70.0, 90.0],
+            resolution: 600.0,
+            trim_mm: [60.0, 80.0],
+            bleed_mm: 3.0,
+            basic_mm: [50.0, 70.0],
+            basic_offset_mm: [0.0, 0.0],
+            right_binding: true,
+            first_page_left: true,
+            title: "ユメの話".into(),
+            story_index: Some(3),
+            author: "だれか".into(),
+            nombre_start: 1,
+            font: None,
+            story: Default::default(),
+        };
+        crate::ClipFile::from_bytes(crate::blank::blank_page(&setup).unwrap().to_bytes().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn a_text_is_replaced_with_its_run_and_without_its_cached_image() {
+        let mut page = page();
+        let (layer, _) = story_layers(page.database(), NOMBRE_INFO).unwrap()[0];
+        let old = layer_text(page.database(), layer).unwrap().unwrap();
+        let run = |page: &crate::ClipFile| {
+            let row = page.row("Layer", layer).unwrap().unwrap();
+            let blocks = crate::text::read_blocks(&row).unwrap();
+            (blocks.len(), blocks[0].text.clone(), row.get("TextLayerString").cloned())
+        };
+        let new = format!("{old}の次");
+        assert!(page.set_layer_text(layer, &new).unwrap());
+        assert_eq!(page.layer_text(layer).unwrap().as_deref(), Some(new.as_str()));
+        // The text stays what CSP stores (UTF-8 in a BLOB), and reads as one block still.
+        let (blocks, text, stored) = run(&page);
+        assert_eq!((blocks, text.as_str()), (1, new.as_str()));
+        assert_eq!(stored, Some(Value::Blob(new.clone().into_bytes())));
+        // Nothing to do the second time, and nothing for a layer with no text.
+        assert!(!page.set_layer_text(layer, &new).unwrap());
+        assert!(!page.set_layer_text(page.canvas.root_folder, "x").unwrap());
+        assert_eq!(layer_text(page.database(), page.canvas.root_folder).unwrap(), None);
+        let report = crate::verify::check_clip(page.to_bytes().unwrap(), Default::default());
+        assert!(report.ok(), "{:?}", report.errors);
+    }
+
+    #[test]
+    fn a_single_page_becomes_a_spread_twice_as_wide() {
+        let mut page = page();
+        let height = page.canvas.height_px;
+        assert!(!page.canvas.double_page);
+        page.make_double_page().unwrap();
+        assert!(page.canvas.double_page && is_spread(page.database()).unwrap());
+        // Twice as wide in the canvas's own unit (70 mm here: a px less than twice 1654).
+        assert_eq!((page.canvas.width, page.canvas.width_px, page.canvas.height_px), (140.0, 3307, height));
+        let width = page.canvas.width_px;
+        let canvas = &page.canvas.row;
+        assert_eq!(canvas.int("ComicIsLeftPage"), 0);
+        assert_eq!(canvas.int("CropFrameOptionFlag") & (LEFT_PAGE_FLAG | RIGHT_PAGE_FLAG | SPREAD_FRAME_FLAG), 17);
+        for column in SPREAD_CANVAS_FLAGS {
+            assert_eq!(canvas.int(column), 1, "{column}");
+        }
+        assert!(has_column(page.database(), "Layer", FOR_RIGHT_PAGE).unwrap());
+        for thumbnail in crate::database::select_all(page.database(), "LayerThumbnail").unwrap() {
+            assert_eq!(
+                (thumbnail.int("ThumbnailCanvasWidth"), thumbnail.int("ThumbnailCanvasHeight")),
+                (width as i64, height as i64)
+            );
+        }
+        // A page with no story info gets only what every spread has.
+        let mut plain =
+            crate::ClipFile::create(&crate::NewCanvas { width: 8, height: 8, ..Default::default() }).unwrap();
+        plain.make_double_page().unwrap();
+        assert_eq!((plain.canvas.width_px, plain.canvas.double_page), (16, true));
+        assert!(!has_column(plain.database(), "Canvas", SPREAD_CANVAS_FLAGS[0]).unwrap());
+    }
 
     #[test]
     fn gives_a_text_room_enough_not_to_break() {

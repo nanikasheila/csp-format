@@ -230,6 +230,74 @@ pub fn has_table(connection: &Connection, table: &str) -> Result<bool> {
     Ok(count > 0)
 }
 
+/// One row by its `MainId`: None when the table has no such row (or is not there).
+pub fn row(connection: &Connection, table: &str, main_id: i64) -> Result<Option<Row>> {
+    if !table_exists(connection, table)? {
+        return Ok(None);
+    }
+    Ok(select(connection, &format!("SELECT * FROM {} WHERE MainId = ?1", quote(table)), [main_id])?.into_iter().next())
+}
+
+/// The first row of a table CSP keeps one row in (`Canvas`, `CanvasPreview`,
+/// `Project`): None when the table is empty (or is not there).
+pub fn first_row(connection: &Connection, table: &str) -> Result<Option<Row>> {
+    if !table_exists(connection, table)? {
+        return Ok(None);
+    }
+    Ok(select(connection, &format!("SELECT * FROM {} ORDER BY rowid LIMIT 1", quote(table)), [])?.into_iter().next())
+}
+
+fn assignments(connection: &Connection, table: &str, values: &[(&str, Value)]) -> Result<String> {
+    let known = columns(connection, table)?;
+    let mut parts = Vec::with_capacity(values.len());
+    for (index, (column, _)) in values.iter().enumerate() {
+        if !known.iter().any(|(name, _)| name == column) {
+            return Err(crate::Error::format(format!("{table} has no column {column}")));
+        }
+        parts.push(format!("{} = ?{}", quote(column), index + 1));
+    }
+    Ok(parts.join(", "))
+}
+
+/// Set columns of the row with this `MainId`. False (nothing changed) when
+/// there is no such row or nothing to set; an error when the table lacks one
+/// of the columns (see [`add_column`]).
+pub fn update_row(connection: &Connection, table: &str, main_id: i64, values: &[(&str, Value)]) -> Result<bool> {
+    if values.is_empty() {
+        return Ok(false);
+    }
+    let sql = format!(
+        "UPDATE {} SET {} WHERE MainId = ?{}",
+        quote(table),
+        assignments(connection, table, values)?,
+        values.len() + 1
+    );
+    let mut params: Vec<Value> = values.iter().map(|(_, value)| value.clone()).collect();
+    params.push(Value::Integer(main_id));
+    Ok(connection.execute(&sql, rusqlite::params_from_iter(params))? > 0)
+}
+
+/// Set columns of every row of a table (of its one row, for `Canvas`). How
+/// many rows there were; an error when the table lacks one of the columns.
+pub fn update_rows(connection: &Connection, table: &str, values: &[(&str, Value)]) -> Result<usize> {
+    if values.is_empty() {
+        return Ok(0);
+    }
+    let sql = format!("UPDATE {} SET {}", quote(table), assignments(connection, table, values)?);
+    Ok(connection.execute(&sql, rusqlite::params_from_iter(values.iter().map(|(_, value)| value)))?)
+}
+
+/// Add a column to a table, as CSP does when a file first needs it (its
+/// columns are declared without a type here; a value keeps the type it is
+/// stored with). False when the table already has it.
+pub fn add_column(connection: &Connection, table: &str, column: &str) -> Result<bool> {
+    if has_column(connection, table, column)? {
+        return Ok(false);
+    }
+    connection.execute(&format!("ALTER TABLE {} ADD COLUMN {}", quote(table), quote(column)), [])?;
+    Ok(true)
+}
+
 /// Quote an identifier for SQL.
 pub fn quote(identifier: &str) -> String {
     format!("\"{}\"", identifier.replace('"', "\"\""))
@@ -270,5 +338,46 @@ mod tests {
         assert_eq!(row.int("Missing"), 0);
         assert!(select_all(&reopened, "Nope").unwrap().is_empty());
         assert_eq!(columns(&reopened, "T").unwrap()[1], ("A".to_string(), "INTEGER".to_string()));
+    }
+
+    #[test]
+    fn rows_are_changed_by_name_without_sql() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE Layer(_PW_ID INTEGER PRIMARY KEY AUTOINCREMENT, MainId INTEGER, LayerName TEXT, \"Odd \"\"Name\" INTEGER);
+                 INSERT INTO Layer(MainId, LayerName) VALUES (3, 'a'), (7, 'b');",
+            )
+            .unwrap();
+        assert_eq!(row(&connection, "Layer", 7).unwrap().unwrap().text("LayerName").as_deref(), Some("b"));
+        assert!(row(&connection, "Layer", 8).unwrap().is_none());
+        assert!(row(&connection, "Nope", 1).unwrap().is_none());
+        assert_eq!(first_row(&connection, "Layer").unwrap().unwrap().int("MainId"), 3);
+        assert!(first_row(&connection, "Nope").unwrap().is_none());
+
+        // One row by its id: the others stay; a name that needs quoting is quoted.
+        let changed = update_row(
+            &connection,
+            "Layer",
+            7,
+            &[("LayerName", Value::Text("c".into())), ("Odd \"Name", Value::Integer(5))],
+        )
+        .unwrap();
+        assert!(changed);
+        assert_eq!(row(&connection, "Layer", 3).unwrap().unwrap().text("LayerName").as_deref(), Some("a"));
+        let seven = row(&connection, "Layer", 7).unwrap().unwrap();
+        assert_eq!((seven.text("LayerName").as_deref(), seven.int("Odd \"Name")), (Some("c"), 5));
+        assert!(!update_row(&connection, "Layer", 8, &[("LayerName", Value::Null)]).unwrap());
+        assert!(!update_row(&connection, "Layer", 7, &[]).unwrap());
+        // A column the table lacks is an error, not a new column, and nothing is changed.
+        assert!(update_row(&connection, "Layer", 7, &[("LayerName", Value::Null), ("Missing", Value::Null)]).is_err());
+        assert_eq!(row(&connection, "Layer", 7).unwrap().unwrap().text("LayerName").as_deref(), Some("c"));
+
+        // Every row; and a column added as CSP adds them, once.
+        assert!(add_column(&connection, "Layer", "DraftLayer").unwrap());
+        assert!(!add_column(&connection, "Layer", "DraftLayer").unwrap());
+        assert_eq!(update_rows(&connection, "Layer", &[("DraftLayer", Value::Integer(1))]).unwrap(), 2);
+        assert!(select_all(&connection, "Layer").unwrap().iter().all(|row| row.int("DraftLayer") == 1));
+        assert!(update_rows(&connection, "Layer", &[("Missing", Value::Null)]).is_err());
     }
 }

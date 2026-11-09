@@ -12,7 +12,7 @@ Animation (timelines, cels, keyframes, 2D camera): :mod:`csp_format.animation`.
 The format is described in ``docs/spec``; the Rust crate in ``crates/``
 also writes and renders files.
 """
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 from .animation import Animation, FrameState, Timeline, Track, read_animation
 from .clip import Canvas, ClipFile, Layer, read_clip
