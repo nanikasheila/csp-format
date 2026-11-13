@@ -8,6 +8,11 @@ raise the minor version).
 
 ## [Unreleased]
 
+### Changed
+
+- `csp-assets`: quick-xml 0.42 (its events are text now; material XML reads as before).
+- Dependencies: the cargo group (#37) and `actions/download-artifact` 8.0.2 (#36).
+
 ## [0.2.0] - 2026-11-10
 
 ### Added

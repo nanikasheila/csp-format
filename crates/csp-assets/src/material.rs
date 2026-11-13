@@ -66,14 +66,14 @@ impl Element {
                     stack.last_mut().ok_or_else(|| Error::format("XML: unbalanced"))?.children.push(element);
                 }
                 Event::Text(text) => {
-                    let text = text.decode().map_err(|e| Error::format(format!("XML: {e}")))?;
+                    let text = text.xml_content(quick_xml::XmlVersion::default());
                     let text = quick_xml::escape::unescape(&text).map_err(|e| Error::format(format!("XML: {e}")))?;
                     stack.last_mut().unwrap().text.push_str(&text);
                 }
-                Event::CData(data) => stack.last_mut().unwrap().text.push_str(&String::from_utf8_lossy(&data)),
+                Event::CData(data) => stack.last_mut().unwrap().text.push_str(&data),
                 Event::GeneralRef(reference) => {
-                    let name = String::from_utf8_lossy(&reference);
-                    let text = match name.as_ref() {
+                    let name: &str = &reference;
+                    let text = match name {
                         "lt" => "<".to_owned(),
                         "gt" => ">".to_owned(),
                         "amp" => "&".to_owned(),
@@ -127,11 +127,11 @@ impl Element {
 }
 
 fn element_of(start: &quick_xml::events::BytesStart) -> Result<Element> {
-    let name = String::from_utf8_lossy(start.name().as_ref()).into_owned();
+    let name = start.name().as_ref().to_owned();
     let mut attributes = Vec::new();
     for attribute in start.attributes() {
         let attribute = attribute.map_err(|e| Error::format(format!("XML attribute: {e}")))?;
-        let key = String::from_utf8_lossy(attribute.key.as_ref()).into_owned();
+        let key = attribute.key.as_ref().to_owned();
         let value = attribute
             .normalized_value(quick_xml::XmlVersion::default())
             .map_err(|e| Error::format(format!("XML attribute: {e}")))?
