@@ -3,6 +3,6 @@
 # checks it. The oldest Rust the crates build with is `rust-version` in
 # Cargo.toml, which CI checks on its own.
 [toolchain]
-channel = "1.99.1"
+channel = "1.100.0"
 components = ["clippy", "rustfmt"]
 profile = "minimal"
