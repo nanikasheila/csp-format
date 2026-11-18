@@ -8,8 +8,8 @@
 //! a new illustration, the root folder, the paper and one raster layer
 //! (built by [`ClipFile::add_layer`]), and a preview rendered from them.
 
-use rusqlite::Connection;
 use rusqlite::types::Value;
+use rusqlite::{Connection, OptionalExtension};
 
 use crate::clip::ClipFile;
 use crate::container::ContainerWriter;
@@ -136,6 +136,37 @@ pub(crate) fn fill_registry(connection: &Connection, param_scheme: &str, elem_sc
         )?;
     }
     Ok(())
+}
+
+/// Register `table` (already created) in `ParamScheme` and `ElemScheme` as
+/// CSP registers it, from the same copies as a new file's registry.
+/// Rows the file already has (CSP lists most tables whether it made them or
+/// not) are kept.
+pub(crate) fn register_table(connection: &Connection, table: &str) -> Result<()> {
+    let registered = |registry: &str| -> Result<bool> {
+        Ok(database::has_table(connection, registry)?
+            && connection
+                .query_row(&format!("SELECT 1 FROM {registry} WHERE TableName = ?1 LIMIT 1"), [table], |_| Ok(()))
+                .optional()?
+                .is_some())
+    };
+    let prefix = format!("{table}	");
+    let rows = |registry: &str, copy: &str| -> Result<String> {
+        Ok(if registered(registry)? || !database::has_table(connection, registry)? {
+            String::new()
+        } else {
+            copy.lines()
+                .filter(|line| line.starts_with(&prefix))
+                .map(|line| {
+                    format!(
+                        "{line}
+"
+                    )
+                })
+                .collect()
+        })
+    };
+    fill_registry(connection, &rows("ParamScheme", PARAM_SCHEME)?, &rows("ElemScheme", ELEM_SCHEME)?)
 }
 
 /// The comic settings CSP writes for a new illustration (Project and Canvas

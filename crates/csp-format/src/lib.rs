@@ -81,6 +81,7 @@ pub mod animation;
 #[doc(hidden)]
 pub mod binary;
 pub mod blank;
+pub mod brush_style;
 pub mod clip;
 pub mod cmc;
 pub mod cmc_pages;
