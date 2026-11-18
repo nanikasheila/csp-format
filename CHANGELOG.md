@@ -8,6 +8,16 @@ raise the minor version).
 
 ## [Unreleased]
 
+### Added
+
+- `csp-format`: `ClipFile::pressure_brush_style` (module `brush_style`) gives
+  a copy of a brush style whose size follows the pen pressure one to one
+  (minimum 0, a straight graph), registering `BrushEffectorGraphData` when the
+  file has none. New vector lines drawn with it are as wide at each point as
+  its width factor says; with a style whose size does not follow the pressure
+  (the vector layers of the built-in templates), CSP drew every point at the
+  full size.
+
 ### Changed
 
 - `csp-assets`: quick-xml 0.42 (its events are text now; material XML reads as before).

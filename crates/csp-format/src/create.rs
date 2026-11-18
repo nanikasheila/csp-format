@@ -8,8 +8,8 @@
 //! a new illustration, the root folder, the paper and one raster layer
 //! (built by [`ClipFile::add_layer`]), and a preview rendered from them.
 
-use rusqlite::Connection;
 use rusqlite::types::Value;
+use rusqlite::{Connection, OptionalExtension};
 
 use crate::clip::ClipFile;
 use crate::container::ContainerWriter;
@@ -137,6 +137,60 @@ pub(crate) fn fill_registry(connection: &Connection, param_scheme: &str, elem_sc
     }
     Ok(())
 }
+
+/// Register `table` (already created) in `ParamScheme` and `ElemScheme` as
+/// CSP registers it, from the same copies as a new file's registry. Rows
+/// the file already has (CSP lists most tables whether it made them or not)
+/// are kept, and columns a registry table lacks are left out.
+pub(crate) fn register_table(connection: &Connection, table: &str) -> Result<()> {
+    let prefix = format!("{table}\t");
+    let registered = |registry: &str| -> Result<bool> {
+        Ok(connection
+            .query_row(&format!("SELECT 1 FROM {registry} WHERE TableName = ?1 LIMIT 1"), [table], |_| Ok(()))
+            .optional()?
+            .is_some())
+    };
+    if database::has_table(connection, "ParamScheme")? && !registered("ParamScheme")? {
+        for line in PARAM_SCHEME.lines().filter(|line| line.starts_with(&prefix)) {
+            let values: Vec<Value> = line
+                .split('\t')
+                .enumerate()
+                .map(|(i, cell)| match (i, cell) {
+                    (_, "\\N") => Value::Null,
+                    (0 | 1 | 9, text) => Value::Text(text.to_owned()),
+                    (_, number) => number.parse().map(Value::Integer).unwrap_or(Value::Null),
+                })
+                .collect();
+            let row = crate::database::Row::new(PARAM_SCHEME_COLUMNS.map(str::to_owned).to_vec(), values);
+            crate::copy::insert_row(connection, "ParamScheme", &row)?;
+        }
+    }
+    if database::has_table(connection, "ElemScheme")? && !registered("ElemScheme")? {
+        for line in ELEM_SCHEME.lines().filter(|line| line.starts_with(&prefix)) {
+            let kind = line.split_once('\t').map_or("0", |(_, kind)| kind);
+            let row = crate::database::Row::new(
+                ["TableName", "ElemType", "MaxIndex"].map(str::to_owned).to_vec(),
+                vec![Value::Text(table.to_owned()), Value::Integer(kind.parse().unwrap_or(0)), Value::Integer(0)],
+            );
+            crate::copy::insert_row(connection, "ElemScheme", &row)?;
+        }
+    }
+    Ok(())
+}
+
+/// The columns of a line of `data/param_scheme.tsv`.
+const PARAM_SCHEME_COLUMNS: [&str; 10] = [
+    "TableName",
+    "LabelName",
+    "DataType",
+    "Flag",
+    "OwnerType",
+    "LockType",
+    "LockSpecified",
+    "AlternativeLockType",
+    "AlternativeLockSpecified",
+    "LinkTable",
+];
 
 /// The comic settings CSP writes for a new illustration (Project and Canvas
 /// share them).
