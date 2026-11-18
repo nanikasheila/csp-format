@@ -287,4 +287,20 @@ mod tests {
         let mut file = file_with_styles();
         assert_eq!(file.pressure_brush_style(99).unwrap(), 99, "no such style");
     }
+
+    #[test]
+    fn a_registry_with_fewer_columns_takes_what_it_has() {
+        let mut file = file_with_styles();
+        file.database()
+            .execute_batch(
+                "DROP TABLE ParamScheme; CREATE TABLE ParamScheme(_PW_ID INTEGER PRIMARY KEY AUTOINCREMENT,                    TableName TEXT, LabelName TEXT, LinkTable TEXT);",
+            )
+            .unwrap();
+        let style = file.pressure_brush_style(33).unwrap();
+        let file = reopened(&file);
+        assert!((brushes(&file).unwrap()[&i64::from(style)].size.factor(0.4, 0.0) - 0.4).abs() < 1e-6);
+        let labels =
+            select(file.database(), "SELECT LabelName FROM ParamScheme WHERE TableName = ?1", [GRAPH_TABLE]).unwrap();
+        assert_eq!(labels.len(), 5);
+    }
 }
